@@ -466,6 +466,125 @@ class Stream:
             return [{k: x for k, x in v.items() if k != "seen"} for v in src.values() if "lat" in v]
 
 
+# ------------------------------------------------------------ ritplannen (uit data/trips.json)
+class Plan:
+    """Dienstregeling per rit: voor het infopaneel en voor voertuigen zonder gps (schaduwvoertuigen)."""
+
+    def __init__(self, trips_path, stops_path):
+        j = json.load(open(trips_path, encoding="utf-8"))
+        self.pat, self.tim, self.svc, self.trips = j["patronen"], j["tijden"], [set(x) for x in j["diensten"]], j["ritten"]
+        self.st = {}
+        for f in json.load(open(stops_path, encoding="utf-8"))["features"]:
+            c = f["geometry"]["coordinates"]
+            self.st[f["properties"]["id"]] = (f["properties"]["naam"], c[1], c[0])
+        self.by_key, self.by_short = {}, {}
+        for i, t in enumerate(self.trips):
+            if t[1]:
+                self.by_key.setdefault(t[1], []).append(i)
+            if t[2]:
+                self.by_short.setdefault(t[2], []).append(i)
+        self.span = [(t[6] + self.tim[t[5]][0], t[6] + self.tim[t[5]][-1]) for t in self.trips]
+
+    @staticmethod
+    def midnight(day):                       # 'JJJJMMDD' -> epoch van 00:00 lokale tijd
+        return int(time.mktime(time.strptime(day, "%Y%m%d")))
+
+    @staticmethod
+    def days(now):
+        return [time.strftime("%Y%m%d", time.localtime(now - k * 86400)) for k in (0, 1)]
+
+    def pick(self, idxs, now, day=None):
+        """Kiest uit ritten met dezelfde sleutel degene die (vandaag of gisteren) nu rijdt. Geeft (index, dag)."""
+        best = None
+        for d in ([day] if day else self.days(now)):
+            m = self.midnight(d)
+            for i in idxs:
+                runs = d in self.svc[self.trips[i][7]]
+                a, b = self.span[i]
+                inside = m + a - 1800 <= now <= m + b + 3600
+                score = (runs, inside)
+                if best is None or score > best[0]:
+                    best = (score, i, d)
+        return (best[1], best[2]) if best else (None, None)
+
+    def find(self, vid, now):
+        if vid.startswith("ns:"):
+            return self.pick(self.by_short.get(vid[3:], []), now)
+        if vid.startswith("plan:"):
+            _, day, i = vid.split(":", 2)
+            return int(i), day
+        day, _, key = vid.partition(":")
+        return self.pick(self.by_key.get(key, []), now, day.replace("-", "") if len(day) == 10 else None)
+
+    def stops(self, i, day):
+        t = self.trips[i]
+        m, rel, out = self.midnight(day) + t[6], self.tim[t[5]], []
+        for k, sid in enumerate(self.pat[t[4]]):
+            name, lat, lon = self.st.get(sid, (sid, None, None))
+            out.append({"sid": sid, "name": name, "lat": lat, "lon": lon, "arr": m + rel[2 * k], "dep": m + rel[2 * k + 1]})
+        return out
+
+    def ghosts(self, now, live_keys, live_shorts, lines):
+        """Ritten die volgens dienstregeling nu rijden maar waarvan geen live positie bekend is."""
+        out = []
+        for d in self.days(now):
+            m = self.midnight(d)
+            rel_now = now - m
+            for i, t in enumerate(self.trips):
+                a, b = self.span[i]
+                if not (a <= rel_now <= b) or d not in self.svc[t[7]] or t[0] not in lines:
+                    continue
+                if (t[1] and t[1] in live_keys) or (t[2] and t[2] in live_shorts):
+                    continue
+                pat, rel, base = self.pat[t[4]], self.tim[t[5]], m + t[6]
+                legs = []
+                for k in range(len(pat)):
+                    arr, dep = base + rel[2 * k], base + rel[2 * k + 1]
+                    if dep > arr and dep >= now - 5:
+                        legs.append([pat[k], pat[k], arr, dep])            # stilstand bij halte
+                    if k + 1 < len(pat):
+                        nxt = base + rel[2 * k + 2]
+                        if nxt >= now - 5:
+                            legs.append([pat[k], pat[k + 1], dep, max(nxt, dep + 1)])
+                    if len(legs) >= 6:
+                        break
+                if legs:
+                    out.append({"id": "plan:%s:%d" % (d, i), "line": t[0], "ghost": True, "legs": legs,
+                                "label": t[2] or "", "head": t[3]})
+        return out
+
+
+def ns_journey(key, nr):
+    """Ritdetails van een trein bij NS (haltes, werkelijke tijden, sporen, materieel). Ongetest formaat: tolerant lezen."""
+    data = get("https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/journey?train=" + nr, {"Ocp-Apim-Subscription-Key": key})
+    stops, extra = [], {}
+    for st in (data.get("payload") or {}).get("stops") or []:
+        if st.get("status") == "PASSING":
+            continue
+        arr, dep = (st.get("arrivals") or [{}])[0], (st.get("departures") or [{}])[0]
+        info = st.get("stop") or {}
+
+        def ts(x):
+            return iso_ts(x[:19] + x[19:22] + ":" + x[22:] if len(x) == 24 and x[19] in "+-" else x) if x else None
+        stops.append({"name": info.get("name", ""), "lat": info.get("lat"), "lon": info.get("lng"),
+                      "arr": ts(arr.get("plannedTime")), "dep": ts(dep.get("plannedTime")),
+                      "arr_real": ts(arr.get("actualTime")), "dep_real": ts(dep.get("actualTime")),
+                      "track": dep.get("actualTrack") or dep.get("plannedTrack") or arr.get("actualTrack") or arr.get("plannedTrack") or "",
+                      "cancelled": bool(arr.get("cancelled") or dep.get("cancelled"))})
+        stock = st.get("actualStock") or st.get("plannedStock") or {}
+        if stock and not extra:
+            parts = stock.get("trainParts") or []
+            extra = {"type": stock.get("trainType", ""), "seats": stock.get("numberOfSeats"), "parts": len(parts) or stock.get("numberOfParts"),
+                     "image": ((parts[0].get("image") or {}).get("uri") if parts else None)}
+        prod = dep.get("product") or arr.get("product") or {}
+        if prod and "product" not in extra:
+            extra["product"] = prod.get("longCategoryName") or prod.get("categoryCode") or ""
+            extra["operator"] = prod.get("operatorName", "")
+    if not stops:
+        raise RuntimeError("geen haltes in NS-antwoord")
+    return stops, extra
+
+
 def ns(key, station="GVC"):
     data = get("https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/departures?station=" + station,
                {"Ocp-Apim-Subscription-Key": key})
@@ -504,7 +623,11 @@ def main():
         print("NS-sleutel gelezen uit ns.key", flush=True)
     meta = json.load(open(a.data, encoding="utf-8"))
     hub = meta["knooppunt"]
-    codes = a.areas.split(",") if a.areas else find_areas(hub["lat"], hub["lon"], hub.get("straal_m", 300))
+    try:
+        codes = a.areas.split(",") if a.areas else find_areas(hub["lat"], hub["lon"], hub.get("straal_m", 300))
+    except Exception as e:  # noqa
+        print("haltegebieden ophalen mislukt (%s); bekende gebieden van Den Haag Centraal gebruikt" % e, flush=True)
+        codes = ["2601", "2605", "2609", "GvCS"]
     print("%d haltegebieden: %s" % (len(codes), ",".join(codes)), flush=True)
     cache = {"t": 0, "body": b"{}"}
     vcache, vstate = {"t": 0, "body": b"{}"}, {}
@@ -518,6 +641,68 @@ def main():
             print("  %d ritsleutels en %d treinnummers geladen" % (len(trip_map), len(short_map)), flush=True)
         except Exception as e:  # noqa
             print("voertuigen uitgeschakeld:", e, flush=True)
+
+    plan = None
+    try:
+        plan = Plan(os.path.join(os.path.dirname(a.lines), "trips.json"), os.path.join(os.path.dirname(a.lines), "stops.geojson"))
+        line_ids = {f["properties"]["id"] for f in json.load(open(a.lines, encoding="utf-8"))["features"]}
+        print("ritplannen: %d ritten geladen" % len(plan.trips), flush=True)
+    except Exception as e:  # noqa
+        print("ritplannen niet beschikbaar (%s); draai build_data.py opnieuw voor het infopaneel" % e, flush=True)
+    jcache = {}
+
+    def live_of(vid):
+        if stream is not None:
+            with stream.lock:
+                v = stream.veh.get(vid) or stream.trains.get(vid)
+                if v:
+                    return dict(v)
+        for v in vstate.get("good", []) + vstate.get("trains", []):
+            if v["id"] == vid:
+                return dict(v)
+        return {}
+
+    def build_trip(vid):
+        now = time.time()
+        live = live_of(vid)
+        live.pop("seen", None)
+        out = {"id": vid, "live": live, "now": int(now), "source": "dienstregeling", "stops": [], "extra": {}}
+        if plan is not None:
+            i, day = plan.find(vid, now)
+            if i is not None:
+                t = plan.trips[i]
+                out.update(line=t[0], head=t[3], number=t[2], stops=plan.stops(i, day))
+        if vid.startswith("ns:") and a.ns_key:
+            c = jcache.get(vid)
+            if not c or now - c[0] > 30:
+                try:
+                    c = (now, ns_journey(a.ns_key, vid[3:]), None)
+                except Exception as e:  # noqa
+                    c = (now, None, str(e))
+                jcache[vid] = c
+                for k in [k for k, x in jcache.items() if now - x[0] > 600]:
+                    del jcache[k]
+            if c[1]:
+                out["stops"], out["extra"], out["source"] = c[1][0], c[1][1], "NS"
+            elif c[2]:
+                out["note"] = "NS-ritdetails niet beschikbaar: " + c[2]
+        delay = live.get("delay")
+        for st in out["stops"]:                      # verwachte tijden: gepland + actuele vertraging
+            if "arr_real" not in st:
+                st["arr_real"] = st["arr"] + delay if delay is not None and st["arr"] else None
+                st["dep_real"] = st["dep"] + delay if delay is not None and st["dep"] else None
+        return json.dumps(out).encode()
+
+    def add_ghosts(vs):
+        if plan is None:
+            return vs
+        keys = {v["id"].split(":", 1)[-1] for v in vs if not v["id"].startswith("ns:")}
+        shorts = {v["id"][3:] for v in vs if v["id"].startswith("ns:")}
+        try:
+            return vs + plan.ghosts(time.time(), keys, shorts, line_ids)
+        except Exception as e:  # noqa
+            print("schaduwvoertuigen:", e, flush=True)
+            return vs
 
     stream = None
     if route_ids and not a.no_stream:
@@ -534,7 +719,7 @@ def main():
         if kv6_live and ns_live:
             return json.dumps({"updated": time.strftime("%Y-%m-%dT%H:%M:%S"), "errors": [], "stale": False,
                                "stream": {"kv6": True, "ns": True},
-                               "vehicles": stream.snapshot("kv6") + stream.snapshot("ns")}).encode()
+                               "vehicles": add_ghosts(stream.snapshot("kv6") + stream.snapshot("ns"))}).encode()
         j = json.loads(build_polled(not kv6_live, not ns_live))
         if kv6_live:
             j["vehicles"] = stream.snapshot("kv6") + [v for v in j["vehicles"] if v["id"].startswith("ns:")]
@@ -542,6 +727,7 @@ def main():
         if ns_live:
             j["vehicles"] = [v for v in j["vehicles"] if not v["id"].startswith("ns:")] + stream.snapshot("ns")
         j["stream"] = {"kv6": kv6_live, "ns": ns_live}
+        j["vehicles"] = add_ghosts(j["vehicles"])
         return json.dumps(j).encode()
 
     def build_polled(want_ovapi=True, want_ns=True):
@@ -604,6 +790,16 @@ def main():
                 print("    begin eerste bericht:", (stream.sample.get(name) or "(niets ontvangen)")[:420].replace("\n", " "))
                 for v in stream.snapshot(name)[:2]:
                     print("    ", v)
+        if plan is not None:
+            g = plan.ghosts(time.time(), set(), set(), line_ids)
+            print("ritplannen: volgens dienstregeling rijden nu %d ritten op onze lijnen" % len(g))
+            if stream is not None:
+                vs = json.loads(build_vehicles())["vehicles"]
+                gh = [v for v in vs if v.get("ghost")]
+                print("  waarvan %d zonder live positie (schaduwvoertuigen); voorbeeld: %s" % (len(gh), json.dumps(gh[0])[:260] if gh else "-"))
+                real = [v for v in vs if not v.get("ghost")]
+                if real:
+                    print("  ritdetails voorbeeld:", build_trip(real[0]["id"]).decode()[:420])
         if route_ids:
             j = json.loads(build_polled())
             print("voertuigen: %d op onze lijnen, %d in het hele bestand, fouten: %s" % (len(j["vehicles"]), j["feed_total"], j["errors"]))
@@ -624,6 +820,10 @@ def main():
                 if time.time() - vcache["t"] > 2:
                     vcache["body"], vcache["t"] = build_vehicles(), time.time()
                 body = vcache["body"]
+            elif self.path.startswith("/trip"):
+                from urllib.parse import urlparse, parse_qs
+                vid = (parse_qs(urlparse(self.path).query).get("id") or [""])[0]
+                body = build_trip(vid)
             elif self.path.startswith("/departures"):
                 if time.time() - cache["t"] > a.ttl:
                     cache["body"], cache["t"] = build(), time.time()

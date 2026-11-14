@@ -488,7 +488,8 @@ def process_feed(feed, radius, exclude_re, today):
         tid = g["trip_id"](r)
         if tid in tt:
             trips[tid] = (g["route_id"](r), g["service_id"](r), g["trip_headsign"](r).strip(),
-                          g["direction_id"](r) or "0", g["shape_id"](r), g["realtime_trip_id"](r))
+                          g["direction_id"](r) or "0", g["shape_id"](r), g["realtime_trip_id"](r),
+                          g["trip_short_name"](r).strip())
     services = {t[1] for t in trips.values()}
 
     # -- routes, agency
@@ -667,6 +668,7 @@ def main():
     # ---- lijnen opbouwen
     lines = {}
     hub_stops_meta = []
+    plan_pat, plan_tim, plan_svc, plan_trips = {}, {}, {}, []
     for d in data:
         memo = {}
         stop_list, stops = d["stop_list"], d["stops"]
@@ -675,7 +677,7 @@ def main():
             tr = d["trips"].get(tid)
             if not tr:
                 continue
-            rid, svc, headsign, direction, shape_id, rt_id = tr
+            rid, svc, headsign, direction, shape_id, rt_id, short_name = tr
             n = len(arr) // 4
             seq = sorted(range(n), key=lambda i: arr[i * 4])
             sts = [station_for(d, stop_list[arr[i * 4 + 1]], memo) for i in seq]
@@ -699,6 +701,23 @@ def main():
                 if not pat or pat[-1] != s:
                     pat.append(s)
             pat = tuple(pat)
+            # ritplan voor het live-deel: per station aankomst (eerste perron) en vertrek (laatste perron)
+            tm, last_s = [], None
+            for j, i in enumerate(seq):
+                if sts[j] != last_s:
+                    tm.append([arr[i * 4 + 2], arr[i * 4 + 3]])
+                    last_s = sts[j]
+                else:
+                    tm[-1][1] = arr[i * 4 + 3]
+            t0 = tm[0][1]
+            rel = tuple(x - t0 for ad in tm for x in ad)
+            pi = plan_pat.setdefault(pat, len(plan_pat))
+            ti = plan_tim.setdefault(rel, len(plan_tim))
+            sk = (d["feed"], svc)
+            if sk not in plan_svc:
+                lo, hi = today.toordinal() - 1, today.toordinal() + 14
+                plan_svc[sk] = (len(plan_svc), sorted(o for o in d["svc_dates"].get(svc, ()) if lo <= o <= hi))
+            plan_trips.append([lid, rt_id, short_name, headsign, pi, ti, t0, plan_svc[sk][0]])
             L["pat"][pat] += 1
             L["pat_shape"][pat][shape_id] += 1
             L["pat_head"][pat][headsign] += 1
@@ -897,6 +916,19 @@ def main():
             log("   niet gevonden (lijn uit dienstregeling gebruikt): " + ", ".join("%s (%dx)" % kv for kv in sorted(osm_miss.items())))
     if n_road:
         log("%d langeafstandsroutes aangeboden aan de routeserver" % n_road)
+    # ritplannen (alleen voor het tussenstation; de kaart laadt dit niet)
+    kept = {f["properties"]["id"] for f in feats}
+    plan = {
+        "gemaakt": meta["gemaakt"],
+        "patronen": [["s%d" % x for x in ptn] for ptn, _ in sorted(plan_pat.items(), key=lambda kv: kv[1])],
+        "tijden": [list(t) for t, _ in sorted(plan_tim.items(), key=lambda kv: kv[1])],
+        "diensten": [[date.fromordinal(o).strftime("%Y%m%d") for o in days] for _, days in sorted(plan_svc.values())],
+        "ritten": [t for t in plan_trips if t[0] in kept],
+    }
+    with open(os.path.join(a.out, "trips.json"), "w", encoding="utf-8") as f:
+        f.write(dump(plan))
+    log("ritplannen: %d ritten, %d haltepatronen, %d tijdprofielen (trips.json, %.1f MB)"
+        % (len(plan["ritten"]), len(plan["patronen"]), len(plan["tijden"]), os.path.getsize(os.path.join(a.out, "trips.json")) / 1e6))
     log("klaar: %d lijnen, %d haltes -> %s/" % (len(feats), len(stop_feats), a.out))
     for c, n in sorted(meta["aantallen"]["per_categorie"].items(), key=lambda kv: cat_order.get(kv[0], 9)):
         log("   %-13s %d" % (c, n))

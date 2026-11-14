@@ -95,6 +95,15 @@ en metro, en de treinposities van NS. Daardoor komen posities binnen zodra ze er
 plaats van eens per minuut. Valt de stroom weg, dan schakelt het terug op opvragen bij OVapi
 en de NS API. Testen: `python3 live_proxy.py --test`.
 
+## Ritpaneel en schaduwvoertuigen
+
+`build_data.py` schrijft ook `data/trips.json`: per rit de haltes en tijden. Het tussenstation
+gebruikt dat voor twee dingen. Tik je een voertuig aan, dan levert `/trip?id=...` de haltes met
+geplande en verwachte tijden (voor treinen aangevuld met de actuele NS-ritinformatie). En ritten
+die volgens de dienstregeling nu rijden maar geen positie delen, zoals Flixbus, rijden als
+schaduwvoertuig mee: gestippeld, stilstaand bij haltes en ertussen optrekkend en afremmend.
+De dienstkalender in `trips.json` loopt twee weken vooruit; draai `build_data.py` dus wekelijks.
+
 ## Bronnen
 
 Dienstregeling: OVapi / OpenOV (CC0). Flixbus: publieke GTFS-feed van Flix.
