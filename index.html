@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OV vanaf Den Haag Centraal</title>
+<link rel="stylesheet" href="vendor/leaflet.css">
+<style>
+:root{
+  --bg:#f4f1ea; --panel:#fffdf8; --ink:#1b1f24; --muted:#6a7078; --line:#e3ded2; --accent:#12355b;
+  --water:#cfe0ea; --land:#f3efe6; --border:#cbc4b3;
+  --trein:#12355b; --metro:#b0257a; --tram:#d9281c; --bus:#e98a00; --nachtbus:#5b3fa6; --langeafstand:#3f9a2f; --veer:#0f8a8a;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg);overflow:hidden}
+#map{position:absolute;inset:0;background:var(--water)}
+.leaflet-container{font:inherit;background:var(--water)}
+.leaflet-tile-pane{filter:grayscale(.85) brightness(1.04) contrast(.92);opacity:.8}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+
+#panel{position:absolute;z-index:1000;top:12px;left:12px;bottom:12px;width:380px;background:var(--panel);border:1px solid var(--line);
+  border-radius:14px;box-shadow:0 6px 24px rgba(20,30,40,.14);display:flex;flex-direction:column;overflow:hidden}
+#handle{display:none}
+header{padding:14px 16px 10px;border-bottom:1px solid var(--line)}
+h1{font-size:17px;margin:0 0 2px;letter-spacing:-.01em}
+.sub{color:var(--muted);font-size:12.5px}
+#search{width:100%;margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:16px}
+#search:focus{outline:2px solid var(--accent);outline-offset:1px}
+nav{display:flex;border-bottom:1px solid var(--line)}
+nav button{flex:1;padding:10px 4px;border:0;background:none;border-bottom:2px solid transparent;color:var(--muted);font-weight:600;font-size:13.5px}
+nav button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
+#body{flex:1;overflow:auto;-webkit-overflow-scrolling:touch}
+section{padding:12px 16px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 10px;font-size:13px;display:flex;align-items:center;gap:6px}
+.chip i{width:10px;height:10px;border-radius:50%;display:inline-block}
+.chip[aria-pressed=false]{opacity:.45}
+.chip small{color:var(--muted)}
+.row{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#fff}
+.seg button{border:0;background:none;padding:6px 10px;font-size:13px}
+.seg button[aria-pressed=true]{background:var(--accent);color:#fff}
+select{border:1px solid var(--line);border-radius:9px;padding:6px 8px;background:#fff;font-size:13px;max-width:100%}
+label.chk{font-size:13px;display:flex;gap:6px;align-items:center}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 16px 4px}
+ul.list{list-style:none;margin:0;padding:0}
+ul.list li button{width:100%;display:flex;gap:10px;align-items:center;text-align:left;border:0;background:none;padding:8px 16px;border-top:1px solid var(--line)}
+ul.list li button:hover{background:#f6f2e8}
+.badge{min-width:38px;max-width:96px;padding:3px 7px;border-radius:7px;color:#fff;font-weight:700;font-size:13px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none}
+.grow{flex:1;min-width:0}
+.t1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t2{color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.right{color:var(--muted);font-size:12.5px;white-space:nowrap;flex:none}
+.tag{font-size:11px;border:1px solid var(--line);border-radius:5px;padding:0 5px;color:var(--muted);margin-left:6px}
+.back{border:0;background:none;color:var(--accent);padding:0;font-weight:600;margin-bottom:8px}
+.detailhead{display:flex;gap:10px;align-items:center}
+.detailhead .badge{font-size:16px;padding:6px 10px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:13.5px;margin-top:10px}
+.kv dt{color:var(--muted)} .kv dd{margin:0}
+.chart{display:flex;align-items:flex-end;gap:2px;height:64px;margin-top:8px;border-bottom:1px solid var(--line)}
+.chart div{flex:1;background:var(--accent);border-radius:2px 2px 0 0;min-height:0}
+.axis{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+ol.stops{list-style:none;margin:8px 0 0;padding:0;position:relative}
+ol.stops li button{display:flex;width:100%;gap:10px;align-items:center;border:0;background:none;padding:5px 0;text-align:left}
+ol.stops .dot{width:11px;height:11px;border-radius:50%;border:3px solid currentColor;background:#fff;flex:none;margin-left:2px}
+ol.stops li.hub{font-weight:700}
+ol.stops li.hub .dot{background:currentColor}
+.empty{color:var(--muted);padding:18px 16px}
+.legend{position:absolute;z-index:900;right:12px;bottom:26px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:12px;display:none}
+.legend b{display:block;margin-bottom:4px}
+.legend span{display:flex;align-items:center;gap:6px}
+.legend i{width:10px;height:10px;border-radius:50%}
+.dep{display:flex;gap:10px;align-items:center;padding:8px 16px;border-top:1px solid var(--line)}
+.dep .time{font-variant-numeric:tabular-nums;font-weight:700;width:48px}
+.late{color:#c0291c}
+pre{background:#f1ede2;border-radius:8px;padding:10px;overflow:auto;font-size:12px}
+code{font-size:12.5px;background:#f1ede2;padding:1px 4px;border-radius:4px}
+#nodata{position:absolute;inset:0;z-index:2000;background:rgba(244,241,234,.96);display:none;align-items:center;justify-content:center;padding:24px}
+#nodata div{max-width:520px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:22px}
+#demo{position:absolute;z-index:950;top:12px;left:50%;transform:translateX(-50%);background:#1b1f24;color:#fff;padding:7px 12px;border-radius:999px;font-size:12.5px;max-width:calc(100vw - 80px);text-align:center}
+.veh{pointer-events:auto;cursor:pointer}
+.veh .vb{position:absolute;left:50%;top:50%;height:11px;width:28px;border:1.5px solid #fff;border-radius:4px 6px 6px 4px;transform:translate(-50%,-50%);box-shadow:0 1px 4px rgba(0,0,0,.45)}
+.veh .vb.bus{width:20px;height:11px}
+.veh .vb.metro{width:32px;height:12px}
+.veh .vb.trein{width:38px;height:12px;border-color:#ffd200;background-image:linear-gradient(90deg,transparent 24%,rgba(255,255,255,.45) 24% 26%,transparent 26% 49%,rgba(255,255,255,.45) 49% 51%,transparent 51% 74%,rgba(255,255,255,.45) 74% 76%,transparent 76%)}
+.veh .vb.tram{background-image:linear-gradient(90deg,transparent 31%,rgba(0,0,0,.4) 31% 34%,transparent 34% 64%,rgba(0,0,0,.4) 64% 67%,transparent 67%)}
+.veh .vb.metro{background-image:linear-gradient(90deg,transparent 48%,rgba(0,0,0,.4) 48% 51%,transparent 51%)}
+.veh .vb i{position:absolute;right:1px;top:1.5px;bottom:1.5px;width:4px;background:rgba(255,255,255,.9);border-radius:1px 3px 3px 1px}
+.veh b{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:9px;line-height:1;color:#fff;text-shadow:0 0 2px #000,0 0 2px #000;pointer-events:none}
+.vsmall .veh .vb{height:8px;width:18px;border-width:1px}.vsmall .veh .vb.bus{width:13px}.vsmall .veh .vb.metro{width:20px}.vsmall .veh .vb.trein{width:24px}.vsmall .veh b{display:none}
+.vtiny .veh .vb{height:6px;width:9px!important;background-image:none}.vtiny .veh .vb i{display:none}
+.pop b{font-size:14px}.pop .chips{margin-top:6px}.pop .chip{padding:2px 8px;font-size:12px;color:#fff;border:0}
+
+@media (max-width:760px){
+  #panel{top:auto;left:0;right:0;bottom:0;width:auto;border-radius:16px 16px 0 0;height:var(--sheet,46vh);transition:height .2s;border-bottom:0}
+  #handle{display:block;border:0;background:none;padding:8px 0 2px;width:100%}
+  #handle::before{content:"";display:block;width:42px;height:5px;border-radius:3px;background:#cfc8b8;margin:0 auto}
+  header{padding:4px 14px 8px}
+  h1{font-size:15px}.sub{display:none}
+  #search{margin-top:6px}
+  .legend{bottom:calc(var(--sheet,46vh) + 10px);right:8px}
+  .leaflet-bottom{bottom:var(--sheet,46vh)}
+}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="legend" id="legend"></div>
+<div id="demo" hidden>Demo met verzonnen testdata. Routes, haltes en tijden kloppen niet.</div>
+
+<div id="panel">
+  <button id="handle" aria-label="Paneel groter of kleiner"></button>
+  <header>
+    <h1>OV vanaf Den Haag Centraal</h1>
+    <div class="sub" id="subtitle">Alle rechtstreekse lijnen op één kaart</div>
+    <input id="search" type="search" placeholder="Zoek lijn, bestemming of halte" autocomplete="off">
+  </header>
+  <nav role="tablist">
+    <button data-tab="lijnen" aria-selected="true">Lijnen</button>
+    <button data-tab="live" aria-selected="false">Vertrektijden</button>
+    <button data-tab="info" aria-selected="false">Over de data</button>
+  </nav>
+  <div id="body"></div>
+</div>
+
+<div id="nodata"><div>
+  <h1>Nog geen data</h1>
+  <p>De kaart staat klaar, maar <code>data/ov-data.js</code> ontbreekt nog. Draai eenmalig in deze map:</p>
+  <pre>python3 build_data.py</pre>
+  <p>Dat haalt de dienstregeling op (ongeveer 250 MB) en schrijft de bestanden in <code>data/</code>. Herlaad daarna deze pagina.</p>
+</div></div>
+
+<script src="vendor/leaflet.js"></script>
+<script src="vendor/basemap.js"></script>
+<script src="config.js"></script>
+<script src="data/ov-data.js"></script>
+<script>
+(function(){
+"use strict";
+/* ============================================================ instellingen */
+var CFG = Object.assign({
+  tiles: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  tilesAttribution: '&copy; OpenStreetMap-bijdragers',
+  liveEndpoint: "",        // bv. "http://raspberrypi.local:8787/departures"
+  liveInterval: 30,
+  vehiclesEndpoint: ""     // leeg = afgeleid van liveEndpoint (/departures -> /vehicles)
+}, window.OV_CONFIG || {});
+
+var CATS = [
+  {id:"trein", label:"Trein"}, {id:"metro", label:"Metro"}, {id:"tram", label:"Tram"}, {id:"bus", label:"Bus"},
+  {id:"nachtbus", label:"Nachtbus"}, {id:"langeafstand", label:"Flixbus e.d."}, {id:"veer", label:"Veer"}
+];
+var DRAW_ORDER = ["langeafstand","trein","veer","bus","nachtbus","tram","metro"];
+var TT_BUCKETS = [[15,"#1a9850","tot 15 min"],[30,"#91cf60","15 tot 30 min"],[60,"#f6c343","30 tot 60 min"],[120,"#f08a3c","1 tot 2 uur"],[1e9,"#c2302b","meer dan 2 uur"]];
+var DAYS = {wk:"Doordeweeks", za:"Zaterdag", zo:"Zondag"};
+var css = getComputedStyle(document.documentElement);
+function catColor(c){ return (css.getPropertyValue("--"+c) || "#555").trim(); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+function $(s,el){ return (el||document).querySelector(s); }
+
+/* ============================================================ kaart */
+var HUB = [52.08085, 4.3247];
+var map = L.map("map", {preferCanvas:true, zoomControl:false, renderer:L.canvas({tolerance:10, padding:.3}), minZoom:4, maxZoom:18})
+  .setView(HUB, 12);
+L.control.zoom({position:"topright"}).addTo(map);
+map.attributionControl.setPrefix(false);
+
+// Achtergrond: ingebouwde vectorkaart (werkt altijd); zodra kaarttegels bereikbaar zijn nemen die het over.
+var vectorBase = window.OV_BASEMAP ? L.geoJSON(window.OV_BASEMAP, {interactive:false,
+  style:{color:css.getPropertyValue("--border").trim(), weight:.8, fillColor:css.getPropertyValue("--land").trim(), fillOpacity:1}}).addTo(map) : null;
+(function tryTiles(){
+  if(!CFG.tiles) return;
+  var img = new Image();
+  img.onload = function(){
+    L.tileLayer(CFG.tiles, {attribution:CFG.tilesAttribution, maxZoom:19, subdomains:"abcd"}).addTo(map).bringToBack();
+    if(vectorBase) map.removeLayer(vectorBase);
+  };
+  img.src = CFG.tiles.replace("{s}","a").replace("{z}",0).replace("{x}",0).replace("{y}",0).replace("{r}","");
+})();
+
+var DATA = window.OV_DATA;
+if(!DATA){ $("#nodata").style.display="flex"; return; }
+
+/* ============================================================ data voorbereiden */
+if(DATA.meta && DATA.meta.demo) $("#demo").hidden=false;
+var lines = DATA.lines.features.map(function(f,i){ var p=f.properties; p._i=i; p._f=f; return p; });
+var stops = {};
+DATA.stops.features.forEach(function(f){ var p=f.properties; stops[p.id]={id:p.id, naam:p.naam, hub:p.knooppunt, ll:[f.geometry.coordinates[1], f.geometry.coordinates[0]], lines:[]}; });
+lines.forEach(function(p){
+  p._color = catColor(p.cat);
+  p._maxFreq = Math.max.apply(null, Object.keys(p.freq).map(function(k){return p.freq[k].perUur||0;}));
+  p._maxTrips = Math.max.apply(null, Object.keys(p.freq).map(function(k){return p.freq[k].ritten||0;}));
+  var seen = {};
+  p.patronen.forEach(function(pt){ pt.haltes.forEach(function(s){ seen[s]=1; }); });
+  p._stops = Object.keys(seen);
+  p._stops.forEach(function(s){ if(stops[s]) stops[s].lines.push(p); });
+  var main = p.patronen[0], a = stops[main.haltes[0]], b = stops[main.haltes[main.haltes.length-1]];
+  p._ends = (a&&b) ? a.naam+" ↔ "+b.naam : (p.naam||"");
+  p._title = p.richtingen.length ? p.richtingen.join(" / ") : p._ends;
+  p._search = [p.nummer,p.naam,p.vervoerder,p._ends,p.richtingen.join(" "),p.cat].join(" ").toLowerCase();
+});
+function tt(p, sid){ var t=p.reistijd[sid]; if(!t) return null; return t[0]!=null ? t[0] : t[1]; }
+function fmtMin(m){ if(m==null) return ""; if(m<60) return m+" min"; var h=Math.floor(m/60), r=m%60; return h+" u"+(r?" "+(r<10?"0":"")+r:""); }
+function freqText(p, day){
+  var f = p.freq[day||"wk"]; if(!f) return "";
+  if(f.perUur>=1) return (Math.round(f.perUur*10)/10).toString().replace(".",",")+"× per uur";
+  if(f.ritten>0) return f.ritten+(f.ritten===1?" rit":" ritten")+" per dag";
+  return "rijdt niet";
+}
+function freqShort(p){
+  var best=null; ["wk","za","zo"].forEach(function(d){ var f=p.freq[d]; if(f && f.ritten>0 && !best) best=d; });
+  if(!best) return "niet op peildagen";
+  return freqText(p,best)+(best!=="wk" ? " ("+DAYS[best].toLowerCase()+")" : "");
+}
+
+/* ============================================================ toestand */
+var state = {
+  cats: {}, seizoen:true, vervoerder:"", kleur:"cat", dikte:true, q:"",
+  tab:"lijnen", line:null, stop:null, pattern:0, day:"wk", voertuigen:true
+};
+CATS.forEach(function(c){ state.cats[c.id]=true; });
+try{ var saved=JSON.parse(localStorage.getItem("ovkaart")||"null"); if(saved){ ["cats","seizoen","kleur","dikte","voertuigen"].forEach(function(k){ if(saved[k]!=null) state[k]=saved[k]; }); } }catch(e){}
+function persist(){ try{ localStorage.setItem("ovkaart", JSON.stringify({cats:state.cats,seizoen:state.seizoen,kleur:state.kleur,dikte:state.dikte,voertuigen:state.voertuigen})); }catch(e){} }
+
+function visible(p){
+  if(!state.cats[p.cat]) return false;
+  if(!state.seizoen && p.seizoen) return false;
+  if(state.vervoerder && p.vervoerder!==state.vervoerder) return false;
+  return true;
+}
+function lineColor(p){
+  if(state.kleur==="lijn" && p.kleur) return p.kleur;
+  if(state.kleur==="tijd") return "#8a8f98";
+  return p._color;
+}
+function lineWeight(p){
+  if(!state.dikte) return 3;
+  var f = p._maxFreq;
+  return Math.max(1.6, Math.min(7, 1.6 + Math.sqrt(f)*1.5));
+}
+
+/* ============================================================ lagen */
+var lineLayers = {}, lineGroup = L.layerGroup().addTo(map), stopGroup = L.layerGroup().addTo(map);
+lines.slice().sort(function(a,b){ return DRAW_ORDER.indexOf(a.cat)-DRAW_ORDER.indexOf(b.cat); }).forEach(function(p){
+  var lyr = L.geoJSON(p._f, {style:function(){ return {color:p._color, weight:3, opacity:.85, lineCap:"round", lineJoin:"round"}; }});
+  lyr.on("click", function(e){ L.DomEvent.stopPropagation(e); selectLine(p, false); });
+  lyr.bindTooltip(function(){ return "<b>"+esc(p.nummer||p.naam)+"</b> "+esc(p._title); }, {sticky:true});
+  lineLayers[p.id]=lyr;
+});
+var hubMarker = L.circleMarker(HUB, {radius:9, color:"#fff", weight:3, fillColor:"#1b1f24", fillOpacity:1, interactive:false, pane:"markerPane"}).addTo(map);
+L.tooltip({permanent:true, direction:"top", offset:[0,-8], className:"hubtip"}).setLatLng(HUB).setContent("Den Haag Centraal").addTo(map);
+
+function ttColor(m){ for(var i=0;i<TT_BUCKETS.length;i++) if(m<TT_BUCKETS[i][0]) return TT_BUCKETS[i][1]; return "#999"; }
+
+function renderMap(){
+  var sel = state.line, targetStop = state.stop;
+  lines.forEach(function(p){
+    var lyr = lineLayers[p.id], on = visible(p) || p===sel;
+    if(targetStop && !sel) on = on && targetStop.lines.indexOf(p)>=0;
+    if(on && !lineGroup.hasLayer(lyr)) lineGroup.addLayer(lyr);
+    if(!on && lineGroup.hasLayer(lyr)) lineGroup.removeLayer(lyr);
+    if(on){
+      var dim = sel && p!==sel;
+      var far = p.cat==="langeafstand" && p!==sel;
+      lyr.setStyle({color:lineColor(p), weight:(far?1.3:lineWeight(p))+(p===sel?2.5:0), opacity: dim ? .13 : far ? .4 : (state.kleur==="tijd" ? .55 : .85)});
+      if(p===sel) lyr.bringToFront();
+    }
+  });
+  renderStops();
+  showVehicles();
+  var lg = $("#legend");
+  if(state.kleur==="tijd"){
+    lg.style.display="block";
+    lg.innerHTML = "<b>Reistijd vanaf Den Haag Centraal</b>"+TT_BUCKETS.map(function(b){ return '<span><i style="background:'+b[1]+'"></i>'+b[2]+'</span>'; }).join("");
+  } else lg.style.display="none";
+}
+
+function renderStops(){
+  stopGroup.clearLayers();
+  var z = map.getZoom(), sel = state.line;
+  var showAll = state.kleur==="tijd" || z>=13;
+  var set = {};
+  if(sel) sel._stops.forEach(function(s){ set[s]=[sel]; });
+  else if(showAll || state.stop){
+    lines.forEach(function(p){ if(!visible(p)) return; if(state.stop && state.stop.lines.indexOf(p)<0) return;
+      p._stops.forEach(function(s){ (set[s]=set[s]||[]).push(p); }); });
+    if(!showAll){ var only={}; only[state.stop.id]=set[state.stop.id]||[]; set=only; }
+  }
+  var b = map.getBounds().pad(.2);
+  Object.keys(set).forEach(function(sid){
+    var s = stops[sid]; if(!s || s.hub) return;
+    if(!sel && !b.contains(s.ll)) return;
+    var best = null; set[sid].forEach(function(p){ var t=tt(p,sid); if(t!=null && (best==null || t<best)) best=t; });
+    var isTarget = state.stop===s;
+    var col = state.kleur==="tijd" && best!=null ? ttColor(best) : (sel ? lineColor(sel) : "#3b4048");
+    var m = L.circleMarker(s.ll, {radius: isTarget?8 : (sel?5 : (state.kleur==="tijd" ? (z<9?2.5:4) : 3.5)), color:"#fff", weight: isTarget?3:1.2, fillColor:col, fillOpacity:1});
+    m.on("click", function(e){ L.DomEvent.stopPropagation(e); stopPopup(s, e.latlng); });
+    stopGroup.addLayer(m);
+  });
+}
+map.on("moveend", function(){ if(!state.line) renderStops(); });
+map.on("click", function(){ if(state.line||state.stop){ state.line=null; state.stop=null; render(); } });
+
+function stopPopup(s, ll){
+  var ls = s.lines.filter(function(p){ return visible(p) || p===state.line; });
+  var best=null; ls.forEach(function(p){ var t=tt(p,s.id); if(t!=null&&(best==null||t<best)) best=t; });
+  var el = document.createElement("div"); el.className="pop";
+  el.innerHTML = "<b>"+esc(s.naam)+"</b><br>"+(best!=null ? "Snelste rechtstreekse rit: "+fmtMin(best) : "")+
+    '<div class="chips">'+ls.map(function(p){ return '<button class="chip" data-i="'+p._i+'" style="background:'+p._color+'">'+esc(p.nummer||p.naam)+'</button>'; }).join("")+"</div>"+
+    '<div style="margin-top:6px"><button class="back" data-stop="1">Alle lijnen naar deze halte</button></div>';
+  el.addEventListener("click", function(e){
+    var b = e.target.closest("button"); if(!b) return;
+    map.closePopup();
+    if(b.dataset.stop) selectStop(s); else selectLine(lines[+b.dataset.i], false);
+  });
+  L.popup({maxWidth:260}).setLatLng(ll||s.ll).setContent(el).openOn(map);
+}
+
+function padding(){
+  var mobile = window.matchMedia("(max-width:760px)").matches;
+  return mobile ? {paddingTopLeft:[20,20], paddingBottomRight:[20, $("#panel").offsetHeight+20]} : {paddingTopLeft:[410,30], paddingBottomRight:[30,30]};
+}
+function selectLine(p, fit){
+  state.line=p; state.stop=null; state.pattern=0; state.tab="lijnen";
+  ["wk","za","zo"].some(function(d){ if(p.freq[d] && p.freq[d].ritten>0){ state.day=d; return true; } });
+  if(p.freq.wk && p.freq.wk.ritten>0) state.day="wk";
+  sheet("half"); render();
+  if(fit!==false) map.fitBounds(lineLayers[p.id].getBounds(), padding());
+}
+function selectStop(s){
+  state.stop=s; state.line=null; state.tab="lijnen"; state.q=""; $("#search").value="";
+  sheet("half"); render();
+  map.fitBounds(L.latLngBounds([HUB, s.ll]), Object.assign({maxZoom:14}, padding()));
+}
+
+/* ============================================================ paneel */
+var body = $("#body");
+var lastView = "";
+function badge(p){ return '<span class="badge" style="background:'+(state.kleur==="lijn"&&p.kleur?p.kleur:p._color)+'">'+esc(p.nummer||"•")+'</span>'; }
+
+function render(){
+  persist();
+  [].forEach.call(document.querySelectorAll("nav button"), function(b){ b.setAttribute("aria-selected", b.dataset.tab===state.tab); });
+  if(state.tab==="live") renderLive();
+  else if(state.tab==="info") renderInfo();
+  else if(state.line) renderLine();
+  else if(state.stop) renderStopView();
+  else renderList();
+  var view = state.tab+"|"+(state.line?state.line.id:"")+"|"+(state.stop?state.stop.id:"");
+  if(view!==lastView){ body.scrollTop=0; lastView=view; }
+  renderMap();
+}
+
+function controlsHtml(){
+  var counts = {}; lines.forEach(function(p){ counts[p.cat]=(counts[p.cat]||0)+1; });
+  var ops = {}; lines.forEach(function(p){ if(p.vervoerder) ops[p.vervoerder]=1; });
+  var h = '<section><div class="chips">';
+  CATS.forEach(function(c){ if(!counts[c.id]) return;
+    h += '<button class="chip" data-cat="'+c.id+'" aria-pressed="'+!!state.cats[c.id]+'"><i style="background:'+catColor(c.id)+'"></i>'+c.label+' <small>'+counts[c.id]+'</small></button>'; });
+  if(lines.some(function(p){return p.seizoen;})) h += '<button class="chip" data-seizoen="1" aria-pressed="'+state.seizoen+'">Seizoenslijnen</button>';
+  h += '</div><div class="row"><span class="seg" role="group" aria-label="Kleur">'+
+    [["cat","Soort"],["lijn","Lijnkleur"],["tijd","Reistijd"]].map(function(k){ return '<button data-kleur="'+k[0]+'" aria-pressed="'+(state.kleur===k[0])+'">'+k[1]+'</button>'; }).join("")+
+    '</span><label class="chk"><input type="checkbox" id="dikte"'+(state.dikte?" checked":"")+'> Dikte = frequentie</label></div>';
+  if(vehEndpoint) h += '<div class="row"><label class="chk"><input type="checkbox" id="voertuigen"'+(state.voertuigen?" checked":"")+'> Live voertuigen <small id="vehcount" style="color:var(--muted)">'+esc(vehStatus())+'</small></label></div>';
+  h += '<div class="row"><select id="vervoerder" aria-label="Vervoerder"><option value="">Alle vervoerders</option>'+
+    Object.keys(ops).sort().map(function(o){ return '<option'+(state.vervoerder===o?" selected":"")+'>'+esc(o)+'</option>'; }).join("")+'</select></div></section>';
+  return h;
+}
+function lineItem(p, right){
+  return '<li><button data-line="'+p._i+'">'+badge(p)+'<span class="grow"><div class="t1">'+esc(p._title)+(p.seizoen?'<span class="tag">seizoen</span>':'')+
+    '</div><div class="t2">'+esc(p.vervoerder||"")+'</div></span><span class="right">'+esc(right!=null?right:freqShort(p))+'</span></button></li>';
+}
+function renderList(){
+  var q = state.q.trim().toLowerCase(), h = controlsHtml();
+  var vis = lines.filter(visible);
+  if(q){
+    var words = q.split(/\s+/);
+    var ls = vis.filter(function(p){ return words.every(function(w){ return p._search.indexOf(w)>=0; }); });
+    var ss = Object.keys(stops).map(function(k){return stops[k];}).filter(function(s){ return !s.hub && s.naam.toLowerCase().indexOf(q)>=0 && s.lines.some(visible); })
+      .sort(function(a,b){ var ai=a.naam.toLowerCase().indexOf(q), bi=b.naam.toLowerCase().indexOf(q); return ai-bi || b.lines.length-a.lines.length || a.naam.localeCompare(b.naam); }).slice(0,12);
+    if(ss.length){ h += "<h2>Bestemmingen</h2><ul class='list'>"+ss.map(function(s){
+      var best=null; s.lines.forEach(function(p){ if(!visible(p)) return; var t=tt(p,s.id); if(t!=null&&(best==null||t<best)) best=t; });
+      return '<li><button data-stop="'+s.id+'"><span class="grow"><div class="t1">'+esc(s.naam)+'</div><div class="t2">'+s.lines.filter(visible).length+' rechtstreekse lijn(en)</div></span><span class="right">'+fmtMin(best)+'</span></button></li>'; }).join("")+"</ul>"; }
+    h += "<h2>Lijnen</h2>"+(ls.length ? "<ul class='list'>"+ls.map(function(p){return lineItem(p);}).join("")+"</ul>" : '<div class="empty">Geen lijn gevonden.</div>');
+  } else {
+    CATS.forEach(function(c){
+      var ls = vis.filter(function(p){ return p.cat===c.id; }); if(!ls.length) return;
+      h += "<h2>"+c.label+" ("+ls.length+")</h2><ul class='list'>"+ls.map(function(p){return lineItem(p);}).join("")+"</ul>";
+    });
+    if(!vis.length) h += '<div class="empty">Alle soorten staan uit. Zet hierboven een filter aan.</div>';
+  }
+  body.innerHTML = h;
+}
+function renderStopView(){
+  var s = state.stop;
+  var ls = s.lines.filter(visible).sort(function(a,b){ return (tt(a,s.id)==null?1e9:tt(a,s.id)) - (tt(b,s.id)==null?1e9:tt(b,s.id)); });
+  body.innerHTML = '<section><button class="back" data-back="1">‹ Alle lijnen</button><div class="detailhead"><div class="grow"><b style="font-size:17px">'+esc(s.naam)+
+    '</b><div class="t2">Rechtstreeks vanaf Den Haag Centraal</div></div></div></section><ul class="list">'+
+    ls.map(function(p){ return lineItem(p, fmtMin(tt(p,s.id))); }).join("")+'</ul>'+(ls.length?"":'<div class="empty">Geen zichtbare lijn; controleer je filters.</div>');
+}
+function renderLine(){
+  var p = state.line, pat = p.patronen[state.pattern] || p.patronen[0], f = p.freq[state.day] || {uren:[],ritten:0,perUur:0};
+  var max = Math.max.apply(null, f.uren.concat([1]));
+  var h = '<section><button class="back" data-back="1">‹ Alle lijnen</button><div class="detailhead">'+badge(p)+'<div class="grow"><b>'+esc(p._title)+'</b><div class="t2">'+esc(p.naam||p._ends)+'</div></div></div>';
+  h += '<dl class="kv"><dt>Vervoerder</dt><dd>'+esc(p.vervoerder||"onbekend")+'</dd><dt>Soort</dt><dd>'+esc((CATS.filter(function(c){return c.id===p.cat;})[0]||{}).label||p.cat)+
+    (p.seizoen?' <span class="tag">rijdt '+p.weken+' weken per jaar</span>':'')+'</dd><dt>Frequentie</dt><dd>'+esc(freqText(p,state.day))+' per richting</dd></dl>';
+  h += '<div class="row"><span class="seg">'+Object.keys(DAYS).map(function(d){ return '<button data-day="'+d+'" aria-pressed="'+(state.day===d)+'">'+DAYS[d]+'</button>'; }).join("")+'</span></div>';
+  h += '<div class="chart" title="Vertrekken per uur vanaf Den Haag Centraal">'+f.uren.map(function(v,i){ return '<div style="height:'+(v/max*100)+'%" title="'+i+':00 – '+v+' vertrekken"></div>'; }).join("")+
+    '</div><div class="axis"><span>0u</span><span>6u</span><span>12u</span><span>18u</span><span>24u</span></div><div class="t2">Vertrekken per uur vanaf Den Haag Centraal, '+f.ritten+' op deze dag</div>';
+  if(p.patronen.length>1) h += '<div class="row"><select id="patroon" aria-label="Routevariant">'+p.patronen.map(function(x,i){
+    return '<option value="'+i+'"'+(i===state.pattern?" selected":"")+'>'+esc("Variant "+(i+1)+": richting "+(x.kop||"?")+" ("+x.ritten+" ritten)")+'</option>'; }).join("")+'</select></div>';
+  h += '<ol class="stops" style="color:'+p._color+'">'+pat.haltes.map(function(sid){ var s=stops[sid]; if(!s) return ""; var t=tt(p,sid);
+    return '<li class="'+(s.hub?"hub":"")+'"><button data-pan="'+sid+'"><span class="dot"></span><span class="grow" style="color:var(--ink)">'+esc(s.naam)+'</span><span class="right">'+(s.hub?"":fmtMin(t))+'</span></button></li>'; }).join("")+'</ol>';
+  h += '<p class="t2" style="white-space:normal">Tijden zijn de reistijd tussen de halte en Den Haag Centraal volgens de dienstregeling.</p></section>';
+  body.innerHTML = h;
+}
+
+/* ---- live vertrektijden (voorbereid) */
+var liveTimer = null, liveData = null, liveErr = null;
+function renderLive(){
+  var h = "";
+  if(!CFG.liveEndpoint){
+    h = '<section><b>Live vertrektijden staan klaar, maar zijn nog niet gekoppeld.</b><p>Een webpagina mag de live-bronnen niet rechtstreeks aanroepen. '+
+      'Daarom zit er een klein tussenstation bij: <code>live_proxy.py</code>. Dat draait op je Pi, haalt elke halve minuut de actuele tijden op bij OVapi en geeft ze in één vast formaat door.</p>'+
+      '<p>Zo zet je het aan:</p><pre>python3 live_proxy.py --data data/meta.json</pre><p>en in <code>config.js</code>:</p><pre>window.OV_CONFIG = {\n  liveEndpoint: "http://&lt;adres-van-je-pi&gt;:8787/departures"\n};</pre>'+
+      '<p class="t2" style="white-space:normal">De haltecodes van het knooppunt staan al in de data (tabblad Over de data). Treinen komen via de NS API; daarvoor is een gratis sleutel nodig, zie de README.</p></section>';
+  } else if(liveErr){
+    h = '<div class="empty">Geen verbinding met '+esc(CFG.liveEndpoint)+'<br><small>'+esc(liveErr)+'</small></div>';
+  } else if(!liveData){
+    h = '<div class="empty">Vertrektijden ophalen…</div>';
+  } else {
+    h = '<section class="t2">Bijgewerkt '+esc(liveData.updated||"")+'</section>'+(liveData.departures||[]).map(function(d){
+      var p = matchLive(d), late = d.expected && d.planned && d.expected!==d.planned;
+      return '<div class="dep"><span class="time'+(late?" late":"")+'">'+esc((d.expected||d.planned||"").slice(11,16))+'</span>'+
+        (p?badge(p):'<span class="badge" style="background:#777">'+esc(d.line||"")+'</span>')+'<span class="grow"><div class="t1">'+esc(d.destination||"")+'</div><div class="t2">'+
+        esc([d.platform?"perron "+d.platform:"", d.status||""].filter(Boolean).join(" · "))+'</div></span>'+(p?'<button class="back" data-line="'+p._i+'" style="margin:0">kaart</button>':'')+'</div>';
+    }).join("") || '<div class="empty">Geen vertrekken gevonden.</div>';
+  }
+  body.innerHTML = h;
+}
+function matchLive(d){
+  var c = lines.filter(function(p){ return (d.route_id && p.live.route_id===d.route_id) || (d.kv78 && p.live.kv78===d.kv78); });
+  if(c.length) return c[0];
+  c = lines.filter(function(p){ return p.nummer && String(p.nummer)===String(d.line) && (!d.mode || p.modaliteit===d.mode || p.cat===d.mode); });
+  return c.length===1 ? c[0] : null;
+}
+function pollLive(){
+  if(!CFG.liveEndpoint) return;
+  fetch(CFG.liveEndpoint, {cache:"no-store"}).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
+    .then(function(j){ liveData=j; liveErr=null; }).catch(function(e){ liveErr=String(e.message||e); })
+    .then(function(){ if(state.tab==="live") renderLive(); });
+}
+function setLivePolling(on){
+  clearInterval(liveTimer); liveTimer=null;
+  if(on && CFG.liveEndpoint){ pollLive(); liveTimer=setInterval(pollLive, Math.max(10,CFG.liveInterval)*1000); }
+}
+
+/* ---- live voertuigen: posities ophalen en doorlopend langs de lijn laten rijden */
+var vehEndpoint = CFG.vehiclesEndpoint || (CFG.liveEndpoint ? CFG.liveEndpoint.replace(/\/departures.*$/, "/vehicles") : "");
+map.createPane("voertuigen").style.zIndex = 450;
+var vehGroup = L.layerGroup().addTo(map);
+var vehicles = {}, vehMeta = {n:0, err:null, at:""}, byRoute = {};
+lines.forEach(function(p){ if(p.feed==="nl" && p.live && p.live.route_id) byRoute[p.live.route_id]=p; });
+function vehStatus(){ return vehMeta.err ? "(geen verbinding)" : vehMeta.at ? "("+vehMeta.n+", "+vehMeta.at+(vehMeta.live?", live stroom":"")+(vehMeta.stale?", even geen nieuwe posities":"")+")" : ""; }
+function lineBearing(p, g, d){   // richting van de lijn op afstand d, in graden (0 = noord)
+  var geo = geoOf(p)[g], a = pointAt(geo, d), b = pointAt(geo, d+15);
+  return (Math.atan2((b[1]-a[1])*Math.cos(a[0]*Math.PI/180), b[0]-a[0])*180/Math.PI + 360) % 360;
+}
+function fmtDelay(sec){ if(sec==null) return ""; var m = Math.round(sec/60); return m>=1 ? "+"+m+" min vertraagd" : m<=-1 ? Math.abs(m)+" min te vroeg" : "op tijd"; }
+var STATUS = {ONROUTE:"onderweg", ONSTOP:"bij halte", ARRIVAL:"komt aan bij halte", DEPARTURE:"vertrekt van halte", OFFROUTE:"rijdt om", INIT:"klaar voor vertrek", DELAY:"wacht op vertrek"};
+function geoOf(p){
+  if(!p._geo) p._geo = p._f.geometry.coordinates.map(function(c){
+    var pts = c.map(function(q){ return [q[1],q[0]]; }), cum=[0];
+    for(var i=1;i<pts.length;i++) cum.push(cum[i-1]+map.distance(pts[i-1],pts[i]));
+    return {pts:pts, cum:cum};
+  });
+  return p._geo;
+}
+function snap(p, ll, prefer){    // dichtstbijzijnde punt op de lijn (binnen 90 m), met afstand langs de lijn
+  var geo = geoOf(p), ky = 111320, kx = 111320*Math.cos(ll[0]*Math.PI/180), best = null, bd = 90;
+  for(var g=0; g<geo.length; g++){
+    var pts = geo[g].pts, cum = geo[g].cum, lim = (g===prefer ? 90 : bd-(prefer!=null?15:0));
+    for(var i=0; i<pts.length-1; i++){
+      var ax=(pts[i][1]-ll[1])*kx, ay=(pts[i][0]-ll[0])*ky, bx=(pts[i+1][1]-ll[1])*kx, by=(pts[i+1][0]-ll[0])*ky;
+      var dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy, t = l2 ? Math.max(0, Math.min(1, -(ax*dx+ay*dy)/l2)) : 0;
+      var d = Math.hypot(ax+t*dx, ay+t*dy);
+      if(d<bd && d<lim){ bd=d; best={g:g, d:cum[i]+t*(cum[i+1]-cum[i])}; }
+    }
+  }
+  return best;
+}
+function pointAt(geo, d){
+  var cum = geo.cum, pts = geo.pts, lo = 0, hi = cum.length-1;
+  if(d<=0) return pts[0]; if(d>=cum[hi]) return pts[hi];
+  while(hi-lo>1){ var m=(lo+hi)>>1; if(cum[m]<=d) lo=m; else hi=m; }
+  var t = (d-cum[lo])/((cum[hi]-cum[lo])||1);
+  return [pts[lo][0]+t*(pts[hi][0]-pts[lo][0]), pts[lo][1]+t*(pts[hi][1]-pts[lo][1])];
+}
+function vehColor(p){ return state.kleur==="lijn" && p.kleur ? p.kleur : p._color; }
+function vehIcon(p){
+  var kind = p.modaliteit==="bus" ? "bus" : p.modaliteit==="metro" ? "metro" : p.modaliteit==="trein" ? "trein" : "tram";
+  return L.divIcon({className:"veh", iconSize:[36,36], iconAnchor:[18,18],
+    html:'<div class="vb '+kind+'" style="background-color:'+vehColor(p)+'"><i></i></div><b>'+esc(p.nummer||"")+'</b>'});
+}
+function vehShown(v){ return state.voertuigen && (state.line ? v.line===state.line : (visible(v.line) && (!state.stop || state.stop.lines.indexOf(v.line)>=0))); }
+function showVehicles(){
+  Object.keys(vehicles).forEach(function(id){
+    var v = vehicles[id], on = vehShown(v);
+    if(on && !vehGroup.hasLayer(v.m)){ vehGroup.addLayer(v.m); v.rotSet = null; }
+    if(!on && vehGroup.hasLayer(v.m)) vehGroup.removeLayer(v.m);
+    if(on){ var el = v.m.getElement(); if(el) el.firstChild.style.backgroundColor = vehColor(v.line); }
+  });
+}
+function vehPopup(v){
+  var el = document.createElement("div"); el.className="pop";
+  var ts = v.data.ts ? new Date(v.data.ts*1000).toLocaleTimeString("nl-NL") : "";
+  var kmh = Math.round(Math.abs(v.speed||0)*3.6);
+  var age = v.data.ts ? Math.max(0, Math.round(Date.now()/1000 - v.data.ts)) : null;
+  if(v.data.kmh!=null) kmh = Math.round(v.data.kmh);
+  el.innerHTML = badge(v.line)+" <b>"+esc(v.line._title)+"</b><br>"+(v.data.label?(/^trein/.test(v.data.label)?"T":"Voertuig ")+esc(v.data.label).replace(/^t/,"")+"<br>":"")+
+    (v.data.delay!=null ? "<b>"+esc(fmtDelay(v.data.delay))+"</b><br>" : "")+
+    (v.data.status && STATUS[v.data.status] ? esc(STATUS[v.data.status].charAt(0).toUpperCase()+STATUS[v.data.status].slice(1))+"<br>" : "")+
+    (v.data.mat && v.data.mat.length ? "Treinstel "+esc(v.data.mat.join(" + "))+"<br>" : "")+
+    (ts?"Laatste meting "+esc(ts)+(age!=null?" ("+(age<90?age+" s":Math.round(age/60)+" min")+" geleden)":"")+"<br>":"")+
+    (v.g!=null ? (v.data.kmh!=null?"Snelheid ":"Geschatte snelheid ")+kmh+" km/u" : "Niet op de lijn gevonden")+
+    '<div style="margin-top:6px"><button class="back">Toon deze lijn</button></div>';
+  el.querySelector("button").addEventListener("click", function(){ map.closePopup(); selectLine(v.line, false); });
+  L.popup({maxWidth:240, offset:[0,-6]}).setLatLng(v.m.getLatLng()).setContent(el).openOn(map);
+}
+function pollVehicles(){
+  if(!vehEndpoint || !state.voertuigen || document.hidden) return;
+  fetch(vehEndpoint, {cache:"no-store"}).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }).then(function(j){
+    var now = Date.now();
+    (j.vehicles||[]).forEach(function(d){
+      var p = byRoute[d.route_id]; if(!p) return;
+      var v = vehicles[d.id], raw = [d.lat, d.lon];
+      if(v && d.ts && d.ts===v.mt){ v.seen = now; return; }          // zelfde meting als vorige keer
+      var s = snap(p, raw, v ? v.g : null);
+      if(!v){
+        v = vehicles[d.id] = {line:p, g:s?s.g:null, dDisp:s?s.d:0, ll:s?pointAt(geoOf(p)[s.g], s.d):raw, speed:0, dir:1};
+        v.m = L.marker(v.ll, {icon:vehIcon(p), pane:"voertuigen", keyboard:false});
+        v.m.on("click", function(e){ L.DomEvent.stopPropagation(e); vehPopup(v); });
+      } else if(s && v.g===s.g && v.mt && d.ts>v.mt){
+        var sp = (s.d-v.md)/(d.ts-v.mt);                              // meter per seconde langs de lijn
+        var vmax = p.modaliteit==="trein" ? 45 : 28;
+        sp = Math.abs(s.d-v.md)<6 ? 0 : Math.max(-vmax, Math.min(vmax, sp));
+        v.speed = (d.ts-v.mt)<20 && v.speed*sp>0 ? v.speed*0.5+sp*0.5 : sp;   // bij snelle metingen wat dempen
+      } else {
+        v.speed = 0;
+        if(s && v.g!==s.g) v.dDisp = s.d;                             // andere routevariant: direct overzetten
+      }
+      if(s && d.kmh!=null){                                             // trein: gemeten snelheid en rijrichting gebruiken
+        var sign = v.speed>0 ? 1 : v.speed<0 ? -1 : 0;
+        if(d.bearing!=null && d.kmh>3){ var diff = Math.abs(((lineBearing(p, s.g, s.d)-d.bearing)%360+540)%360-180); sign = diff<90 ? 1 : -1; }
+        if(sign) v.speed = sign*Math.min(45, d.kmh/3.6);
+        if(d.kmh<1) v.speed = 0;
+      }
+      if(d.status==="ONSTOP" || d.status==="ARRIVAL" || d.status==="INIT") v.speed = 0;   // staat bij een halte
+      v.line = p; v.data = d; v.g = s?s.g:null; v.md = s?s.d:0; v.mll = raw; v.mt = d.ts||0; v.seen = now; v.recv = now;
+    });
+    Object.keys(vehicles).forEach(function(id){ if(now-vehicles[id].seen > 150000){ vehGroup.removeLayer(vehicles[id].m); delete vehicles[id]; } });
+    vehMeta = {n:Object.keys(vehicles).length, err:null, at:(j.updated||"").slice(11,16), stale:!!j.stale, live:!!(j.stream && (j.stream.kv6 || j.stream.ns))};
+    showVehicles();
+  }).catch(function(e){ vehMeta.err = String(e.message||e); }).then(function(){ var c=$("#vehcount"); if(c) c.textContent = vehStatus(); });
+}
+function vehLoop(){       // met de live stroom elke 4 s verversen (kost niets: de Pi luistert al mee), anders elke 15 s
+  pollVehicles();
+  setTimeout(vehLoop, vehMeta.live ? 4000 : 15000);
+}
+function stepVehicles(){
+  var now = Date.now(), b = map.getBounds().pad(.1);
+  Object.keys(vehicles).forEach(function(id){
+    var v = vehicles[id], ll;
+    if(v.g!=null){
+      // doorrijden op de laatst gemeten snelheid, gerekend vanaf het tijdstip van de meting (hooguit 100 s vooruit)
+      var age = v.mt ? Math.max(0, Math.min(100, now/1000 - v.mt)) : Math.min(100, (now-v.recv)/1000);
+      var target = v.md + v.speed*age, diff = target - v.dDisp;
+      v.dDisp = Math.abs(diff)>6000 ? target : v.dDisp + diff*0.12;
+      var geo = geoOf(v.line)[v.g];
+      ll = pointAt(geo, v.dDisp);
+      var dir = Math.abs(diff)>0.3 ? (diff>0?1:-1) : (v.speed>0?1:v.speed<0?-1:v.dir);
+      if(dir){ v.dir = dir; var q = pointAt(geo, v.dDisp+dir*12);
+        if(q[0]!==ll[0] || q[1]!==ll[1]) v.rot = Math.atan2((q[1]-ll[1])*Math.cos(ll[0]*Math.PI/180), q[0]-ll[0])*180/Math.PI - 90; }
+    } else {
+      ll = [v.ll[0]+(v.mll[0]-v.ll[0])*0.12, v.ll[1]+(v.mll[1]-v.ll[1])*0.12];
+    }
+    v.ll = ll;
+    if(!vehGroup.hasLayer(v.m) || !b.contains(ll)) return;
+    v.m.setLatLng(ll);
+    if(v.rot!=null && v.rot!==v.rotSet){ var el = v.m.getElement(); if(el){ el.firstChild.style.transform = "translate(-50%,-50%) rotate("+v.rot.toFixed(1)+"deg)"; v.rotSet = v.rot; } }
+  });
+}
+function vehZoom(){ var z = map.getZoom(); map.getContainer().classList.toggle("vsmall", z<13); map.getContainer().classList.toggle("vtiny", z<11); }
+if(vehEndpoint){
+  map.on("zoomend", vehZoom); vehZoom();
+  map.on("moveend", function(){ Object.keys(vehicles).forEach(function(id){ var v=vehicles[id]; if(vehGroup.hasLayer(v.m)){ v.m.setLatLng(v.ll); v.rotSet=null; } }); });
+  vehLoop();
+  setInterval(stepVehicles, 100);
+  document.addEventListener("visibilitychange", function(){ if(!document.hidden) pollVehicles(); });
+}
+
+function renderInfo(){
+  var m = DATA.meta, a = m.aantallen||{};
+  var h = '<section><dl class="kv"><dt>Lijnen</dt><dd>'+a.lijnen+'</dd><dt>Haltes</dt><dd>'+a.haltes+'</dd><dt>Gemaakt</dt><dd>'+esc((m.gemaakt||"").replace("T"," "))+
+    '</dd><dt>Dienstregeling</dt><dd>'+esc((m.feedperiode||[]).join(" t/m "))+'</dd><dt>Peildagen</dt><dd>'+Object.keys(m.peildagen||{}).map(function(k){ return DAYS[k].toLowerCase()+" "+esc(m.peildagen[k]||"geen"); }).join("<br>")+
+    '</dd><dt>Bronnen</dt><dd>'+(m.bronnen||[]).map(function(b){ return esc(b.feed+": "+(b.uitgever||b.bestand)+(b.versie?" ("+b.versie+")":"")); }).join("<br>")+'</dd></dl>'+
+    '<p class="t2" style="white-space:normal">Een lijn telt mee als minstens één rit stopt binnen '+esc(m.knooppunt.straal_m)+' meter van Den Haag Centraal. De frequentie is het aantal vertrekken per uur per richting tussen 7 en 19 uur op de peildag (nachtbussen: tussen 0 en 5 uur).</p></section>';
+  h += "<h2>Haltes van het knooppunt (voor live-koppeling)</h2><ul class='list'>"+(m.knooppunt.haltes||[]).map(function(s){
+    return '<li><button data-ll="'+s.lat+","+s.lon+'"><span class="grow"><div class="t1">'+esc(s.name)+(s.platform?" · perron "+esc(s.platform):"")+'</div><div class="t2">'+esc(s.feed)+" · stop_id "+esc(s.stop_id)+(s.stop_code?" · code "+esc(s.stop_code):"")+
+      '</div></span><span class="right">'+s.ritten+' ritten</span></button></li>'; }).join("")+"</ul>";
+  body.innerHTML = h;
+}
+
+/* ---- gebeurtenissen */
+body.addEventListener("click", function(e){
+  var b = e.target.closest("button"); if(!b) return; var d = b.dataset;
+  if(d.cat){ state.cats[d.cat]=!state.cats[d.cat]; render(); }
+  else if(d.seizoen){ state.seizoen=!state.seizoen; render(); }
+  else if(d.kleur){ state.kleur=d.kleur; render(); }
+  else if(d.line){ selectLine(lines[+d.line]); }
+  else if(d.stop){ selectStop(stops[d.stop]); }
+  else if(d.back){ state.line=null; state.stop=null; render(); }
+  else if(d.day){ state.day=d.day; render(); }
+  else if(d.pan){ var s=stops[d.pan]; map.setView(s.ll, Math.max(map.getZoom(),14)); sheet("half"); }
+  else if(d.ll){ var ll=d.ll.split(",").map(Number); map.setView(ll, 18); }
+});
+body.addEventListener("change", function(e){
+  if(e.target.id==="dikte"){ state.dikte=e.target.checked; render(); }
+  if(e.target.id==="voertuigen"){ state.voertuigen=e.target.checked; render(); if(state.voertuigen) pollVehicles(); }
+  if(e.target.id==="vervoerder"){ state.vervoerder=e.target.value; render(); }
+  if(e.target.id==="patroon"){ state.pattern=+e.target.value; render(); }
+});
+$("#search").addEventListener("input", function(e){ state.q=e.target.value; state.tab="lijnen"; state.line=null; state.stop=null; sheet("full"); render(); });
+$("nav").addEventListener("click", function(e){ var b=e.target.closest("button"); if(!b) return; state.tab=b.dataset.tab; setLivePolling(state.tab==="live"); sheet("half", true); render(); });
+
+/* ---- uitschuifpaneel op mobiel */
+var SHEETS = {peek:"132px", half:"46vh", full:"88vh"}, sheetNow="half";
+function sheet(s, onlyGrow){
+  if(onlyGrow && sheetNow!=="peek") return;
+  sheetNow=s; document.documentElement.style.setProperty("--sheet", SHEETS[s]);
+}
+$("#handle").addEventListener("click", function(){ sheet(sheetNow==="peek"?"half":sheetNow==="half"?"full":"peek"); });
+map.on("dragstart", function(){ if(sheetNow==="full") sheet("half"); });
+
+/* ---- start */
+$("#subtitle").textContent = lines.length+" rechtstreekse lijnen, "+(Object.keys(stops).length-1)+" haltes";
+render();
+map.fitBounds(L.latLng(HUB).toBounds(14000), padding());
+})();
+</script>
+</body>
+</html>
